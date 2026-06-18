@@ -21,4 +21,6 @@ Settings → Widgets → Browse community widgets → Install.
 
 ## License
 
-MIT. See [LICENSE](./LICENSE).
+
+AGPL-3.0-or-later. See [LICENSE](LICENSE).
+
