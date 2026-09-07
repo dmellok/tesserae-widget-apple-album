@@ -25,6 +25,7 @@ References (reverse-engineered, MIT):
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import random
 import re
@@ -35,6 +36,10 @@ from pathlib import Path
 from typing import Any
 
 BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+# Used when the token gives no usable partition (non-base62 chars in
+# the partition slice, or a derived host with no DNS record). Apple
+# answers with a 330 redirect to the right host from here.
+FALLBACK_PARTITION = 1
 HTTP_TIMEOUT_S = 15
 MANIFEST_TTL_S = 6 * 3600
 ASSET_TTL_S = 50 * 60
@@ -62,7 +67,7 @@ TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-;]+$")
 
 def _parse_token(raw: str) -> str:
     """Extract the album token from either the full share link
-    (https://www.icloud.com/sharedalbum/#B0xxxxxx) or a bare token."""
+    (https://www.icloud.com/sharedalbum/#<token>) or a bare token."""
     s = (raw or "").strip()
     if "#" in s:
         s = s.split("#", 1)[1]
@@ -82,18 +87,26 @@ def _base62_to_int(s: str) -> int:
 
 def _partition_for(token: str) -> int:
     """Mirror ghostops/ICloud-Shared-Album's partition derivation:
-    tokens starting with 'A' use 1 char, everything else uses 2."""
+    tokens starting with 'A' use 1 char, everything else uses 2.
+    Newer base64url tokens can carry '_' or '-' in those positions,
+    which base62 can't decode; fall back to a known partition and let
+    Apple's 330 redirect point at the right host."""
     if not token:
         raise ValueError("empty token")
-    if token[0] == "A":
-        return _base62_to_int(token[1:2])
-    return _base62_to_int(token[1:3])
+    chars = token[1:2] if token[0] == "A" else token[1:3]
+    try:
+        return _base62_to_int(chars)
+    except ValueError:
+        return FALLBACK_PARTITION
+
+
+def _base_url_for_partition(n: int, token: str) -> str:
+    prefix = f"0{n}" if n < 10 else str(n)
+    return f"https://p{prefix}-sharedstreams.icloud.com/{token}/sharedstreams/"
 
 
 def _initial_base_url(token: str) -> str:
-    n = _partition_for(token)
-    prefix = f"0{n}" if n < 10 else str(n)
-    return f"https://p{prefix}-sharedstreams.icloud.com/{token}/sharedstreams/"
+    return _base_url_for_partition(_partition_for(token), token)
 
 
 # ----- HTTP helpers --------------------------------------------------
@@ -127,7 +140,14 @@ def _resolve_base_url(token: str) -> tuple[str, dict[str, Any]]:
     Returns (base_url, first_webstream_response) so the caller doesn't
     need a second HTTP round-trip."""
     base = _initial_base_url(token)
-    status, body = _post_json(base + "webstream", {"streamCtag": None})
+    try:
+        status, body = _post_json(base + "webstream", {"streamCtag": None})
+    except urllib.error.URLError:
+        # The derived host has no DNS record (high partition numbers
+        # don't exist). Retry from the fallback partition; Apple's 330
+        # redirect carries the real host.
+        base = _base_url_for_partition(FALLBACK_PARTITION, token)
+        status, body = _post_json(base + "webstream", {"streamCtag": None})
     if status == 330:
         host = body.get("X-Apple-MMe-Host")
         if not host:
@@ -142,8 +162,16 @@ def _resolve_base_url(token: str) -> tuple[str, dict[str, Any]]:
 # ----- manifest cache ------------------------------------------------
 
 
-def _safe_cache_key(token: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_-]", "_", token)[:40]
+def _safe_cache_key(value: str) -> str:
+    """Filesystem-safe cache key. Short values (base62 tokens, photo
+    GUIDs) pass through unchanged so existing caches stay valid; longer
+    base64url tokens are truncated with a hash suffix so two tokens
+    sharing a prefix don't share a cache."""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", value)
+    if len(safe) <= 40:
+        return safe
+    digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:16]
+    return f"{safe[:23]}_{digest}"
 
 
 def _read_cache(path: Path, ttl: int) -> dict[str, Any] | None:
@@ -276,7 +304,7 @@ def fetch(
     if not token:
         return {
             "error": "Paste the share link from a public iCloud Shared Album "
-            "(https://www.icloud.com/sharedalbum/#B0…). Enable "
+            "(https://www.icloud.com/sharedalbum/#…). Enable "
             "'Public Website' on the album in Photos to get the link.",
             "url": None,
         }

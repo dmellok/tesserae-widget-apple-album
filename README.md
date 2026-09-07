@@ -6,7 +6,7 @@ Photo carousel from a public [iCloud Shared Album](https://support.apple.com/gui
 
 1. Open the album in Photos (Mac, iPad, iPhone, or icloud.com).
 2. Enable **Public Website** on the album.
-3. Copy the share link (`https://www.icloud.com/sharedalbum/#B0xxxxxx`) or just the token (`B0xxxxxx`).
+3. Copy the share link (`https://www.icloud.com/sharedalbum/#…`) or just the token (everything after the `#`).
 4. Paste it into the widget's cell options.
 
 No API key needed. The widget uses Apple's reverse-engineered iCloud Shared Album endpoints, undocumented but stable for ~10 years.

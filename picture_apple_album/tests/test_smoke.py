@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -50,9 +52,30 @@ def test_token_regex_accepts_base64url_share_tokens() -> None:
     tok = "D2Av3xm1ZC1oiMtDjuq8n5tuATQCAEQARog_KVvBdn6NRKTCPDZgIT6Tl9M4hXmUp_zwtnAljCq4tg"
     assert server.TOKEN_RE.match(tok)
     assert server._partition_for(tok) == 134
-    assert server._initial_base_url(tok).startswith(
-        "https://p134-sharedstreams.icloud.com/"
-    )
+    assert server._initial_base_url(tok).startswith("https://p134-sharedstreams.icloud.com/")
+
+
+def test_partition_falls_back_when_token_chars_are_not_base62() -> None:
+    """base64url tokens can put '_' or '-' in the partition slice.
+    Instead of raising, use the fallback partition and rely on the 330
+    redirect."""
+    server = _load_server()
+    tok = "D_Av3xm1ZC1oiMtDjuq8n5tuATQCAEQARog_KVvBdn6NRKTCPDZgIT6Tl9M4hXmUp_zwtnAljCq4tg"
+    assert server._partition_for(tok) == server.FALLBACK_PARTITION
+    assert server._initial_base_url(tok).startswith("https://p01-sharedstreams.icloud.com/")
+    assert server._partition_for("A-xxxxxx") == server.FALLBACK_PARTITION
+
+
+def test_cache_key_keeps_short_values_and_hashes_long_ones() -> None:
+    server = _load_server()
+    assert server._safe_cache_key("B0xABCDEF") == "B0xABCDEF"
+    assert server._safe_cache_key("abc-123") == "abc-123"
+    prefix = "D2Av3xm1ZC1oiMtDjuq8n5tuATQCAEQARog_KVvBdn6NRKTCPDZ"
+    a = server._safe_cache_key(prefix + "gIT6Tl9M4hXmUp_zwtnAljCq4tg")
+    b = server._safe_cache_key(prefix + "ZZZZZZZZZZZZZZZZZZZZZZZZZZZ")
+    assert a != b
+    assert len(a) <= 40
+    assert not re.search(r"[^A-Za-z0-9_-]", a)
 
 
 def test_initial_base_url_zero_pads_low_partitions() -> None:
@@ -165,6 +188,27 @@ def test_fetch_returns_largest_derivative_url(tmp_path) -> None:
     assert out["url"].endswith("biglurl?signature=xyz")
     assert out["stream"] == "Family"
     assert out["owner"] == "Jane Doe"
+
+
+def test_resolve_base_url_retries_from_fallback_when_host_has_no_dns() -> None:
+    """A token whose partition slice decodes to a high number (e.g. 'zz'
+    -> 3843) points at a host with no DNS record. The first POST raises
+    URLError; we retry from the fallback partition."""
+    server = _load_server()
+    seen: list[str] = []
+
+    def _fake(req, timeout):
+        seen.append(req.full_url)
+        if "p3843-" in req.full_url:
+            raise urllib.error.URLError("nodename nor servname provided")
+        return _FakeResp(_FAKE_WEBSTREAM)
+
+    with patch("urllib.request.urlopen", side_effect=_fake):
+        base, body = server._resolve_base_url("Dzzv3xm1ZC1oiMtDjuq8n5tuATQCAEQARog_KVv")
+    assert seen[0].startswith("https://p3843-sharedstreams.icloud.com/")
+    assert seen[1].startswith("https://p01-sharedstreams.icloud.com/")
+    assert base.startswith("https://p01-sharedstreams.icloud.com/")
+    assert body["streamName"] == "Family"
 
 
 def test_fetch_returns_error_when_token_missing() -> None:
