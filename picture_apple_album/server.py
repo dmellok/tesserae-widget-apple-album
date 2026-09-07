@@ -52,7 +52,9 @@ REQ_HEADERS = {
     "Referer": "https://www.icloud.com/sharedalbum/",
     "Connection": "keep-alive",
 }
-TOKEN_RE = re.compile(r"^[A-Za-z0-9;]+$")
+# Old-style tokens are base62 (B0xxxxxxxx); newer share links carry a
+# ~78-char base64url token that includes '_' and '-'.
+TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-;]+$")
 
 
 # ----- token parsing + URL derivation --------------------------------

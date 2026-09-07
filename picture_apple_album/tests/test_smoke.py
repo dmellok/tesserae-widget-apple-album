@@ -42,6 +42,19 @@ def test_partition_derivation_matches_reference_implementation() -> None:
     assert server._partition_for("AZxxxxxx") == 35
 
 
+def test_token_regex_accepts_base64url_share_tokens() -> None:
+    """Newer share links carry a long base64url token containing '_'
+    and '-'. The partition rule (base62 of token[1:3]) still applies:
+    Apple's 330 redirect for this token reports partition 134."""
+    server = _load_server()
+    tok = "D2Av3xm1ZC1oiMtDjuq8n5tuATQCAEQARog_KVvBdn6NRKTCPDZgIT6Tl9M4hXmUp_zwtnAljCq4tg"
+    assert server.TOKEN_RE.match(tok)
+    assert server._partition_for(tok) == 134
+    assert server._initial_base_url(tok).startswith(
+        "https://p134-sharedstreams.icloud.com/"
+    )
+
+
 def test_initial_base_url_zero_pads_low_partitions() -> None:
     server = _load_server()
     assert server._initial_base_url("B00xxxxxxx").startswith(
