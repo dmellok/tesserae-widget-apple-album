@@ -1,0 +1,56 @@
+{
+ "results": [
+  {
+   "shortGUID": {
+    "value": "0AbCdEfGhIjKlMnOpQrStUvWx",
+    "shouldFetchRootRecord": true
+   },
+   "containerIdentifier": "com.apple.photos.cloud",
+   "environment": "production",
+   "databaseScope": "SHARED",
+   "zoneID": {
+    "zoneName": "SharedCollection-00000000-0000-4000-8000-000000000000",
+    "ownerRecordName": "_00000000000000000000000000000000",
+    "zoneType": "REGULAR_CUSTOM_ZONE"
+   },
+   "share": {
+    "recordName": "cloudkit.zoneshare",
+    "recordType": "cloudkit.share",
+    "fields": {
+     "cloudkit.title": {
+      "value": "Family trip",
+      "type": "STRING"
+     },
+     "cloudkit.type": {
+      "value": "photos_sharedcollections",
+      "type": "STRING"
+     }
+    },
+    "zoneID": {
+     "zoneName": "SharedCollection-00000000-0000-4000-8000-000000000000",
+     "ownerRecordName": "_00000000000000000000000000000000",
+     "zoneType": "REGULAR_CUSTOM_ZONE"
+    },
+    "publicPermission": "READ_WRITE",
+    "publicAnonymousAccess": true,
+    "displayedHostname": "share.icloud.com",
+    "shortGUID": "0AbCdEfGhIjKlMnOpQrStUvWx"
+   },
+   "ownerIdentity": {
+    "userRecordName": "_00000000000000000000000000000000",
+    "nameComponents": {
+     "givenName": "Jane",
+     "familyName": "Doe"
+    }
+   },
+   "anonymousPublicAccess": {
+    "token": "FAKE_ANONYMOUS_ACCESS_TOKEN",
+    "tokenTTL": 1200000,
+    "databasePartition": "https://p172-ckdatabasews.icloud.com:443",
+    "resolvedPartitionNumber": 172
+   },
+   "minimallyResolved": false,
+   "requireAppleLogin": false
+  }
+ ]
+}

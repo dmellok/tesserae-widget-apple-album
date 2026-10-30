@@ -1,6 +1,14 @@
 """picture_apple_album, public iCloud Shared Album rotation.
 
-Uses Apple's *undocumented* but long-stable shared-album endpoints:
+Two kinds of shared album exist, both reached anonymously:
+
+* Legacy shared albums (``https://www.icloud.com/sharedalbum/#<token>``)
+  use the old "sharedstreams" endpoints described below.
+* Newer shared albums (``https://photos.icloud.com/shared/album/<token>/``,
+  ``https://share.icloud.com/photos/<token>``) live in a CloudKit zone;
+  see the CloudKit section further down.
+
+The legacy flow uses Apple's *undocumented* but long-stable endpoints:
   POST {base}/webstream      → manifest of photos in the album
   POST {base}/webasseturls   → time-limited signed URLs for specific
                                photo GUIDs (keyed by derivative checksum)
@@ -17,6 +25,10 @@ Two caches in data_dir:
   asset_<guid>.json      , signed URLs for one photo (TTL 50 min;
                             Apple's URLs expire at ~1 h)
 
+The CloudKit flow caches the same manifest (``"system": "cloudkit"``)
+plus ``ck_access_<token>.json``, the anonymous access token from
+records/resolve (TTL from Apple, ~20 min).
+
 References (reverse-engineered, MIT):
   https://github.com/ghostops/ICloud-Shared-Album
   https://github.com/bertrandom/icloud-shared-album-to-flickr
@@ -31,6 +43,7 @@ import random
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -65,14 +78,58 @@ TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-;]+$")
 # ----- token parsing + URL derivation --------------------------------
 
 
-def _parse_token(raw: str) -> str:
-    """Extract the album token from either the full share link
-    (https://www.icloud.com/sharedalbum/#<token>) or a bare token."""
+LEGACY = "legacy"
+CLOUDKIT = "cloudkit"
+AUTO = "auto"
+
+
+def _parse_album(raw: str) -> tuple[str, str]:
+    """Split what the user pasted into (system, token).
+
+    system is LEGACY or CLOUDKIT when the link says which kind of album
+    it is, AUTO for a bare token or an unknown link. Accepted links:
+      https://www.icloud.com/sharedalbum/#<token>      legacy
+      https://photos.icloud.com/shared/album/<token>/  CloudKit
+      https://share.icloud.com/photos/<token>          CloudKit
+      https://www.icloud.com/photos/#<token>           CloudKit (where
+                                                       share.icloud.com
+                                                       redirects)"""
     s = (raw or "").strip()
-    if "#" in s:
-        s = s.split("#", 1)[1]
-    s = s.strip().strip("/")
-    return s
+    if "://" not in s and re.match(r"^[\w.-]*icloud\.com/", s):
+        s = "https://" + s
+    if "://" not in s:
+        if "#" in s:
+            s = s.split("#", 1)[1]
+        return AUTO, s.strip().strip("/")
+    parts = urllib.parse.urlsplit(s)
+    host = (parts.hostname or "").lower()
+    segments = [seg for seg in parts.path.split("/") if seg]
+    fragment = parts.fragment.strip().strip("/")
+    if host.endswith("icloud.com") and segments[:1] == ["sharedalbum"]:
+        return LEGACY, fragment
+    if host == "photos.icloud.com" and segments[:2] == ["shared", "album"] and len(segments) > 2:
+        return CLOUDKIT, segments[2]
+    if host == "share.icloud.com" and segments[:1] == ["photos"] and len(segments) > 1:
+        return CLOUDKIT, segments[1]
+    if host.endswith("icloud.com") and segments[:1] == ["photos"] and fragment:
+        return CLOUDKIT, fragment.split("/")[-1]
+    if fragment:
+        return AUTO, fragment
+    return AUTO, segments[-1] if segments else ""
+
+
+def _parse_token(raw: str) -> str:
+    """Extract the album token from any accepted share link or a bare
+    token (see _parse_album)."""
+    return _parse_album(raw)[1]
+
+
+def _looks_legacy(token: str) -> bool:
+    """Guess the system for a bare token. Legacy tokens start with 'A'
+    or 'B' (the partition prefix) or are the ~78-char base64url form;
+    CloudKit short GUIDs are 25 chars and start with '0'. A wrong guess
+    only costs a fallback request (see _load_manifest)."""
+    return token[:1] in ("A", "B") or len(token) >= 40
 
 
 def _base62_to_int(s: str) -> int:
@@ -191,11 +248,35 @@ def _write_cache(path: Path, payload: dict[str, Any]) -> None:
         path.write_text(json.dumps(payload), encoding="utf-8")
 
 
-def _load_manifest(token: str, data_dir: Path) -> dict[str, Any]:
+def _load_manifest(token: str, data_dir: Path, system: str = AUTO) -> dict[str, Any]:
+    """Cached album manifest. For a bare token (AUTO) the likelier system
+    is tried first; when that one doesn't know the album, the other."""
     cache_path = data_dir / f"manifest_{_safe_cache_key(token)}.json"
     cached = _read_cache(cache_path, MANIFEST_TTL_S)
     if cached is not None:
         return cached
+    if system in (LEGACY, CLOUDKIT):
+        manifest = _load_system_manifest(system, token, data_dir)
+    else:
+        order = [LEGACY, CLOUDKIT] if _looks_legacy(token) else [CLOUDKIT, LEGACY]
+        try:
+            manifest = _load_system_manifest(order[0], token, data_dir)
+        except Exception as first:
+            try:
+                manifest = _load_system_manifest(order[1], token, data_dir)
+            except Exception:
+                raise first from None
+    _write_cache(cache_path, manifest)
+    return manifest
+
+
+def _load_system_manifest(system: str, token: str, data_dir: Path) -> dict[str, Any]:
+    if system == CLOUDKIT:
+        return _load_cloudkit_manifest(token, data_dir)
+    return _load_legacy_manifest(token)
+
+
+def _load_legacy_manifest(token: str) -> dict[str, Any]:
     base, body = _resolve_base_url(token)
     photos = body.get("photos") or []
     slim_photos = []
@@ -232,7 +313,6 @@ def _load_manifest(token: str, data_dir: Path) -> dict[str, Any]:
         "photos": slim_photos,
         "fetched_at": int(time.time()),
     }
-    _write_cache(cache_path, manifest)
     return manifest
 
 
@@ -273,6 +353,330 @@ def _asset_url_for(base: str, token: str, photo: dict[str, Any], data_dir: Path)
     return None
 
 
+# ----- CloudKit shared albums ---------------------------------------
+#
+# Newer shared albums are CloudKit share zones ("SharedCollection-<UUID>")
+# in the com.apple.photos.cloud container. The iCloud Photos web app
+# reads them anonymously in three steps, which we mirror:
+#
+#   POST {CK_RESOLVE_URL}  {"shortGUIDs": [{"value": <token>}]}
+#        → zoneID, share title, owner name, and anonymousPublicAccess:
+#          a short-lived token plus the database partition host
+#   POST {partition}/…/shared/records/query
+#        ?publicAccessAuthToken=<token>&sharing_url_key=<shortGUID>
+#        recordType CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted
+#        → CPLMaster (the file) + CPLAsset (date, edits) record pairs,
+#          paged with continuationMarker; each rendition field carries a
+#          signed downloadURL (~15 min) with a "${f}" filename slot
+#   POST {partition}/…/shared/records/lookup
+#        → the same records again, for fresh download URLs
+
+
+CK_RESOLVE_URL = (
+    "https://p01-ckdatabasews.icloud.com/database/1/"
+    "com.apple.photos.cloud/production/public/records/resolve"
+)
+CK_DB_PATH = "/database/1/com.apple.photos.cloud/production/shared/"
+CK_QUERY_TYPE = "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted"
+CK_PAGE_SIZE = 200
+CK_MAX_PAGES = 100
+# Assume a download URL lives this long when it carries no e= expiry.
+CK_URL_TTL_S = 10 * 60
+# Stop handing out a URL this long before it expires; the frame still
+# has to download it.
+CK_URL_MARGIN_S = 2 * 60
+# Renditions in order of preference, (record, field prefix). The 2048 px
+# JPEG covers any panel; the asset's copy includes the owner's edits.
+# "Full" and "Original" are often HEIC, so only JPEG/PNG files count.
+CK_RENDITIONS = (
+    ("asset", "resJPEGMed"),
+    ("master", "resJPEGMed"),
+    ("asset", "resJPEGFull"),
+    ("master", "resJPEGFull"),
+    ("master", "resOriginal"),
+)
+CK_IMAGE_TYPES = {"public.jpeg", "public.png"}
+CK_VIDEO_TYPES = {
+    "com.apple.quicktime-movie",
+    "public.mpeg-4",
+    "public.movie",
+    "public.avi",
+    "public.3gpp",
+    "com.apple.m4v-video",
+}
+
+
+class AlbumError(RuntimeError):
+    """A failure with a message meant for the person setting up the
+    widget (shown as-is in the cell)."""
+
+
+class AlbumNotFoundError(AlbumError):
+    pass
+
+
+_APPLE_CHANGED = " Apple may have changed how shared albums work."
+
+
+def _ck_resolve(token: str) -> dict[str, Any]:
+    """records/resolve for one short GUID → the single result item."""
+    status, body = _post_json(
+        CK_RESOLVE_URL, {"shortGUIDs": [{"value": token, "shouldFetchRootRecord": True}]}
+    )
+    results = body.get("results") if isinstance(body, dict) else None
+    if status >= 400 or not isinstance(results, list) or not results:
+        raise AlbumError(f"iCloud couldn't look up this album (HTTP {status})." + _APPLE_CHANGED)
+    item = results[0] if isinstance(results[0], dict) else {}
+    if item.get("serverErrorCode") == "NOT_FOUND":
+        raise AlbumNotFoundError(
+            "iCloud doesn't know this album link. Check the link; the owner "
+            "may have stopped sharing the album."
+        )
+    if item.get("serverErrorCode"):
+        raise AlbumError(
+            f"iCloud refused this album link ({item['serverErrorCode']})." + _APPLE_CHANGED
+        )
+    access = item.get("anonymousPublicAccess")
+    if (
+        item.get("requireAppleLogin")
+        or item.get("minimallyResolved")
+        or not isinstance(access, dict)
+        or not access.get("token")
+    ):
+        raise AlbumError(
+            "This album isn't public. In Photos, open the album's sharing "
+            "options and turn on the public link, then paste that link."
+        )
+    zone = item.get("zoneID")
+    if (
+        item.get("databaseScope") != "SHARED"
+        or not isinstance(zone, dict)
+        or not zone.get("zoneName")
+    ):
+        raise AlbumError("iCloud described this album in an unexpected way." + _APPLE_CHANGED)
+    return item
+
+
+def _ck_access(token: str, data_dir: Path, *, refresh: bool = False) -> dict[str, Any]:
+    """Anonymous access for the album: token, partition, zone, plus the
+    title and owner, cached until shortly before Apple's TTL runs out."""
+    cache_path = data_dir / f"ck_access_{_safe_cache_key(token)}.json"
+    if not refresh:
+        cached = _read_cache(cache_path, MANIFEST_TTL_S)
+        if cached and float(cached.get("expires_at") or 0) > time.time():
+            return cached
+    item = _ck_resolve(token)
+    access = item["anonymousPublicAccess"]
+    ttl_s = int(access.get("tokenTTL") or 0) / 1000
+    share_fields = (item.get("share") or {}).get("fields") or {}
+    name = (item.get("ownerIdentity") or {}).get("nameComponents") or {}
+    result = {
+        "token": access["token"],
+        "partition": str(access.get("databasePartition") or "").rstrip("/")
+        or "https://p01-ckdatabasews.icloud.com:443",
+        "zone": item["zoneID"],
+        "title": (share_fields.get("cloudkit.title") or {}).get("value") or "",
+        "owner": f"{name.get('givenName') or ''} {name.get('familyName') or ''}".strip(),
+        "expires_at": time.time() + max(ttl_s - 60, 60),
+    }
+    _write_cache(cache_path, result)
+    return result
+
+
+def _ck_call(
+    token: str, data_dir: Path, op: str, body: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """POST a shared-database operation for the album; re-resolves once
+    when Apple rejects a stale access token. Returns (access, payload)."""
+    access = _ck_access(token, data_dir)
+    for attempt in range(2):
+        query = urllib.parse.urlencode(
+            {"publicAccessAuthToken": access["token"], "sharing_url_key": token}
+        )
+        url = f"{access['partition']}{CK_DB_PATH}{op}?{query}"
+        status, payload = _post_json(url, {**body, "zoneID": access["zone"]})
+        if status in (401, 403) and attempt == 0:
+            access = _ck_access(token, data_dir, refresh=True)
+            continue
+        if status in (401, 403):
+            raise AlbumError(
+                "iCloud refused anonymous access to this album's photos "
+                f"(HTTP {status}). The album may no longer be public."
+            )
+        if status >= 400 or not isinstance(payload, dict):
+            raise AlbumError(f"iCloud {op} failed (HTTP {status})." + _APPLE_CHANGED)
+        return access, payload
+    raise AssertionError("unreachable")
+
+
+def _ck_value(record: dict[str, Any] | None, field: str) -> Any:
+    if not record:
+        return None
+    entry = (record.get("fields") or {}).get(field)
+    return entry.get("value") if isinstance(entry, dict) else None
+
+
+def _ck_url_expiry(url: str) -> float:
+    """Expiry (epoch s) from a signed download URL's e= parameter."""
+    values = urllib.parse.parse_qs(urllib.parse.urlsplit(url).query).get("e") or []
+    try:
+        return float(values[0])
+    except (IndexError, ValueError):
+        return time.time() + CK_URL_TTL_S
+
+
+def _ck_rendition(asset: dict[str, Any] | None, master: dict[str, Any]) -> dict[str, Any] | None:
+    """The preferred browser-friendly rendition of one photo:
+    {"on", "field", "url", "url_expires", "width", "height"}."""
+    records = {"asset": asset, "master": master}
+    for on, prefix in CK_RENDITIONS:
+        record = records[on]
+        res = _ck_value(record, prefix + "Res")
+        if not isinstance(res, dict) or not res.get("downloadURL"):
+            continue
+        file_type = _ck_value(record, prefix + "FileType")
+        if file_type is None and prefix != "resJPEGMed":
+            continue
+        if file_type is not None and file_type not in CK_IMAGE_TYPES:
+            continue
+        width = int(_ck_value(record, prefix + "Width") or 0)
+        height = int(_ck_value(record, prefix + "Height") or 0)
+        # Derived JPEGs are stored upright; an original keeps its EXIF
+        # orientation, where 5-8 mean the pixels are turned 90 degrees.
+        if prefix == "resOriginal" and int(_ck_value(master, "originalOrientation") or 1) >= 5:
+            width, height = height, width
+        url = str(res["downloadURL"]).replace("${f}", "photo.jpg")
+        return {
+            "on": on,
+            "field": prefix + "Res",
+            "url": url,
+            "url_expires": _ck_url_expiry(url),
+            "width": width,
+            "height": height,
+        }
+    return None
+
+
+def _ck_is_video(master: dict[str, Any]) -> bool:
+    item_type = str(_ck_value(master, "itemType") or "").lower()
+    return item_type in CK_VIDEO_TYPES or "movie" in item_type or "video" in item_type
+
+
+def _ck_photo(asset: dict[str, Any] | None, master: dict[str, Any]) -> dict[str, Any] | None:
+    """One manifest entry for a CPLMaster (+ its CPLAsset), or None for
+    videos and photos without a usable rendition."""
+    if _ck_is_video(master):
+        return None
+    rendition = _ck_rendition(asset, master)
+    if rendition is None:
+        return None
+    date_ms = _ck_value(asset, "assetDate") or _ck_value(master, "originalCreationDate")
+    date = None
+    if isinstance(date_ms, (int, float)):
+        date = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(date_ms / 1000))
+    return {
+        "guid": (asset or master).get("recordName"),
+        "master": master.get("recordName"),
+        "dateCreated": date,
+        **rendition,
+    }
+
+
+def _ck_pair_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Join CPLAsset records to their CPLMaster (in asset order) and turn
+    each pair into a manifest photo."""
+    masters: dict[str, dict[str, Any]] = {}
+    assets: list[dict[str, Any]] = []
+    for record in records:
+        if not isinstance(record, dict) or record.get("serverErrorCode"):
+            continue
+        if record.get("recordType") == "CPLMaster":
+            masters[str(record.get("recordName"))] = record
+        elif record.get("recordType") == "CPLAsset":
+            assets.append(record)
+    photos = []
+    seen: set[str] = set()
+    for asset in assets:
+        ref = _ck_value(asset, "masterRef") or {}
+        master = masters.get(str(ref.get("recordName")))
+        if master is None or asset.get("recordName") in seen:
+            continue
+        seen.add(str(asset.get("recordName")))
+        photo = _ck_photo(asset, master)
+        if photo:
+            photos.append(photo)
+    return photos
+
+
+def _load_cloudkit_manifest(token: str, data_dir: Path) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "query": {
+            "recordType": CK_QUERY_TYPE,
+            "filterBy": [
+                {
+                    "fieldName": "direction",
+                    "comparator": "EQUALS",
+                    "fieldValue": {"value": "ASCENDING", "type": "STRING"},
+                }
+            ],
+        },
+        "resultsLimit": CK_PAGE_SIZE,
+    }
+    records: list[dict[str, Any]] = []
+    access: dict[str, Any] = {}
+    for _ in range(CK_MAX_PAGES):
+        access, payload = _ck_call(token, data_dir, "records/query", body)
+        records.extend(payload.get("records") or [])
+        marker = payload.get("continuationMarker")
+        if not marker:
+            break
+        body["continuationMarker"] = marker
+    return {
+        "system": CLOUDKIT,
+        "stream": access.get("title") or "",
+        "owner": access.get("owner") or "",
+        "photos": _ck_pair_records(records),
+        "fetched_at": int(time.time()),
+    }
+
+
+def _ck_asset_url_for(token: str, photo: dict[str, Any], data_dir: Path) -> str | None:
+    """A download URL for a manifest photo that is good for a couple more
+    minutes: the one from the manifest while it lasts, then a fresh one
+    from records/lookup (cached until shortly before it expires)."""
+    guid = photo.get("guid")
+    if not guid:
+        return None
+    deadline = time.time() + CK_URL_MARGIN_S
+    if photo.get("url") and float(photo.get("url_expires") or 0) > deadline:
+        return str(photo["url"])
+    cache_path = data_dir / f"asset_{_safe_cache_key(token)}_{_safe_cache_key(guid)}.json"
+    cached = _read_cache(cache_path, ASSET_TTL_S)
+    if cached and cached.get("url") and float(cached.get("url_expires") or 0) > deadline:
+        return str(cached["url"])
+    names = [guid] + ([photo["master"]] if photo.get("master") and photo["master"] != guid else [])
+    _, payload = _ck_call(
+        token, data_dir, "records/lookup", {"records": [{"recordName": n} for n in names]}
+    )
+    found = {
+        r.get("recordName"): r
+        for r in payload.get("records") or []
+        if isinstance(r, dict) and not r.get("serverErrorCode")
+    }
+    master = found.get(photo.get("master"))
+    if master is None:
+        # The photo left the album: drop the manifest so the next render
+        # lists the album again.
+        with contextlib.suppress(OSError):
+            (data_dir / f"manifest_{_safe_cache_key(token)}.json").unlink()
+        return None
+    rendition = _ck_rendition(found.get(guid), master)
+    if rendition is None:
+        return None
+    _write_cache(cache_path, {"url": rendition["url"], "url_expires": rendition["url_expires"]})
+    return str(rendition["url"])
+
+
 # ----- orientation filter -------------------------------------------
 
 
@@ -300,12 +704,13 @@ def fetch(
     options: dict[str, Any], settings: dict[str, Any], *, ctx: dict[str, Any]
 ) -> dict[str, Any]:
     del settings
-    token = _parse_token(options.get("album") or "")
+    system, token = _parse_album(options.get("album") or "")
     if not token:
         return {
             "error": "Paste the share link from a public iCloud Shared Album "
-            "(https://www.icloud.com/sharedalbum/#…). Enable "
-            "'Public Website' on the album in Photos to get the link.",
+            "(https://photos.icloud.com/shared/album/… or "
+            "https://www.icloud.com/sharedalbum/#…). Turn on the public "
+            "link (Public Website) for the album in Photos to get it.",
             "url": None,
         }
     if not TOKEN_RE.match(token):
@@ -315,7 +720,9 @@ def fetch(
     data_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        manifest = _load_manifest(token, data_dir)
+        manifest = _load_manifest(token, data_dir, system)
+    except AlbumError as err:
+        return {"error": str(err)[:200], "url": None}
     except Exception as err:
         return {"error": f"{type(err).__name__}: {err}"[:200], "url": None}
 
@@ -346,7 +753,15 @@ def fetch(
     else:
         photo = random.choice(filtered)
 
-    url = _asset_url_for(manifest["base"], token, photo, data_dir)
+    if manifest.get("system") == CLOUDKIT:
+        try:
+            url = _ck_asset_url_for(token, photo, data_dir)
+        except AlbumError as err:
+            return {"error": str(err)[:200], "url": None}
+        except Exception as err:
+            return {"error": f"{type(err).__name__}: {err}"[:200], "url": None}
+    else:
+        url = _asset_url_for(manifest["base"], token, photo, data_dir)
     if not url:
         return {"error": "Could not resolve a signed URL for the picked photo.", "url": None}
 
