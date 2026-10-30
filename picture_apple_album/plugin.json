@@ -1,7 +1,7 @@
 {
   "tesserae_compat": "1.x",
   "name": "Picture, Apple Shared Album",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "kind": "widget",
   "description": "Rotates through photos in a public iCloud Shared Album, full bleed. Turn on the album's public link in Photos, then paste the link (https://photos.icloud.com/shared/album/…, https://share.icloud.com/photos/…, or the older https://www.icloud.com/sharedalbum/#…) or just its token. Videos are skipped. NOTE: uses Apple's undocumented shared-album endpoints (the iCloud Photos web app's anonymous CloudKit calls, and the older sharedstreams API).",
   "icon": "ph-cloud-arrow-down",

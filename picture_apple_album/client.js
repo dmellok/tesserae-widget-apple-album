@@ -1,12 +1,25 @@
 // picture_apple_album, Spectra full-bleed image. Renders one signed
-// Apple Photos shared-album asset filling the cell. No overlay; the
+// Apple Photos shared-album asset in the cell. No overlay; the
 // stream's vibe is the whole point.
+//
+// The Scale option maps onto object-fit, like the other picture widgets.
+// The shared .is-bleed rule defaults the <img> to cover, so every mode
+// (including the "fit" default) is set inline here so the dropdown
+// actually does something. "Fit with blurred background" paints a
+// blurred, cover-scaled copy of the same image behind the contained one.
 
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
 }
+
+const OBJECT_FIT = {
+  fit: "contain",
+  fill: "cover",
+  stretch: "fill",
+  blurred: "contain",
+};
 
 function fmtDate(iso) {
   if (typeof iso !== "string" || !iso) return "";
@@ -18,6 +31,8 @@ export default function render(shadow, ctx) {
   const data = ctx?.data ?? {};
   const opts = ctx?.cell?.options || {};
   const showCaption = opts.show_caption === true; // default false, pictures are the point
+  const scale = OBJECT_FIT[String(opts.scale || "fit")] ? String(opts.scale || "fit") : "fit";
+  const objectFit = OBJECT_FIT[scale];
   const css = `<link rel="stylesheet" href="/static/style/spectra-widgets.css">`;
 
   if (data.error) {
@@ -46,10 +61,15 @@ export default function render(shadow, ctx) {
     if (data.count) captionBits.push(`${data.count} photos`);
   }
 
+  const src = escapeHtml(data.url);
+  const backdrop = scale === "blurred"
+    ? `<img src="${src}" alt="" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:blur(18px);transform:scale(1.1);">`
+    : "";
   shadow.innerHTML = `
     ${css}
-    <div class="w is-bleed" data-widget="picture_apple_album">
-      <img src="${escapeHtml(data.url)}" alt="">
+    <div class="w is-bleed" data-widget="picture_apple_album" data-scale="${scale}" style="overflow:hidden;">
+      ${backdrop}
+      <img src="${src}" alt="" style="position:relative;object-fit:${objectFit};">
       ${captionBits.length
         ? `<div class="img-overlay"><span class="sub">${escapeHtml(captionBits.join(" · "))}</span></div>`
         : ""}
