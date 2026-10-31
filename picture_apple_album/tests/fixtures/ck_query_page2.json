@@ -1,0 +1,120 @@
+{
+ "records": [
+  {
+   "recordName": "M009",
+   "recordType": "CPLMaster",
+   "fields": {
+    "itemType": {
+     "value": "public.heic",
+     "type": "STRING"
+    },
+    "originalOrientation": {
+     "value": 6,
+     "type": "NUMBER_INT64"
+    },
+    "resJPEGMedFileType": {
+     "value": "public.jpeg",
+     "type": "STRING"
+    },
+    "resOriginalWidth": {
+     "value": 5712,
+     "type": "NUMBER_INT64"
+    },
+    "resJPEGMedWidth": {
+     "value": 1536,
+     "type": "NUMBER_INT64"
+    },
+    "resOriginalHeight": {
+     "value": 4284,
+     "type": "NUMBER_INT64"
+    },
+    "resJPEGMedRes": {
+     "value": {
+      "fileChecksum": "M008resJPEGMedRes",
+      "size": 1046270,
+      "downloadURL": "https://cvws.icloud-content.com/B/M008resJPEGMedRes/${f}?o=FAKE&e=4102444800&ckz=SharedCollection-0000&s=FAKE"
+     },
+     "type": "ASSETID"
+    },
+    "resJPEGMedHeight": {
+     "value": 2048,
+     "type": "NUMBER_INT64"
+    },
+    "resOriginalRes": {
+     "value": {
+      "fileChecksum": "M009resOriginalRes",
+      "size": 3115434,
+      "downloadURL": "https://cvws.icloud-content.com/B/M009resOriginalRes/${f}?o=FAKE&e=4102444800&ckz=SharedCollection-0000&s=FAKE"
+     },
+     "type": "ASSETID"
+    },
+    "resOriginalFileType": {
+     "value": "public.heic",
+     "type": "STRING"
+    }
+   }
+  },
+  {
+   "recordName": "A012",
+   "recordType": "CPLAsset",
+   "fields": {
+    "resJPEGFullHeight": {
+     "value": 5712,
+     "type": "NUMBER_INT64"
+    },
+    "resJPEGFullRes": {
+     "value": {
+      "fileChecksum": "M010resJPEGFullRes",
+      "size": 2087560,
+      "downloadURL": "https://cvws.icloud-content.com/B/M010resJPEGFullRes/${f}?o=FAKE&e=4102444800&ckz=SharedCollection-0000&s=FAKE"
+     },
+     "type": "ASSETID"
+    },
+    "resJPEGFullFileType": {
+     "value": "public.heic",
+     "type": "STRING"
+    },
+    "resJPEGMedRes": {
+     "value": {
+      "fileChecksum": "M011resJPEGMedRes",
+      "size": 839014,
+      "downloadURL": "https://cvws.icloud-content.com/B/M011resJPEGMedRes/${f}?o=FAKE&e=4102444800&ckz=SharedCollection-0000&s=FAKE"
+     },
+     "type": "ASSETID"
+    },
+    "masterRef": {
+     "value": {
+      "recordName": "M009",
+      "action": "DELETE_SELF",
+      "zoneID": {
+       "zoneName": "SharedCollection-00000000-0000-4000-8000-000000000000",
+       "ownerRecordName": "_00000000000000000000000000000000",
+       "zoneType": "REGULAR_CUSTOM_ZONE"
+      }
+     },
+     "type": "REFERENCE"
+    },
+    "resJPEGMedFileType": {
+     "value": "public.jpeg",
+     "type": "STRING"
+    },
+    "resJPEGFullWidth": {
+     "value": 4284,
+     "type": "NUMBER_INT64"
+    },
+    "resJPEGMedWidth": {
+     "value": 1536,
+     "type": "NUMBER_INT64"
+    },
+    "assetDate": {
+     "value": 1768602494013,
+     "type": "TIMESTAMP"
+    },
+    "resJPEGMedHeight": {
+     "value": 2048,
+     "type": "NUMBER_INT64"
+    }
+   }
+  }
+ ]
+}

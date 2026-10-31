@@ -7,6 +7,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import shutil
+import subprocess
 import urllib.error
 from pathlib import Path
 from unittest.mock import patch
@@ -224,3 +226,59 @@ def test_renders_empty_state_when_no_album_configured(client: FlaskClient, size:
     assert resp.status_code == 200
     body = resp.get_data(as_text=True)
     assert 'data-plugin="picture_apple_album"' in body
+
+
+def test_client_maps_every_scale_choice_to_an_object_fit() -> None:
+    """The Scale dropdown was declared in plugin.json but the client never
+    read it, so every choice rendered as the host's cover rule. Keep the
+    manifest choices and the client's object-fit table in step."""
+    root = Path(__file__).resolve().parents[1]
+    manifest = json.loads((root / "plugin.json").read_text(encoding="utf-8"))
+    scale = next(o for o in manifest["cell_options"] if o["name"] == "scale")
+    client = (root / "client.js").read_text(encoding="utf-8")
+    for choice in scale["choices"]:
+        assert f'{choice["value"]}: "' in client, choice["value"]
+    assert "opts.scale" in client
+    assert "object-fit:${objectFit}" in client
+
+
+_RENDER_JS = """
+import render from %r;
+const out = [];
+for (const scale of JSON.parse(process.argv[2])) {
+  const shadow = {};
+  const options = scale === null ? {} : { scale };
+  render(shadow, { data: { url: "https://x.test/a.jpg" }, cell: { options } });
+  out.push(shadow.innerHTML);
+}
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_client_applies_scale_to_the_rendered_image(tmp_path: Path) -> None:
+    client = Path(__file__).resolve().parents[1] / "client.js"
+    # Node only treats a .js file as an ES module when told to.
+    module = tmp_path / "client.mjs"
+    module.write_text(client.read_text(encoding="utf-8"), encoding="utf-8")
+    script = tmp_path / "run.mjs"
+    script.write_text(_RENDER_JS % str(module), encoding="utf-8")
+    scales = [None, "fit", "fill", "stretch", "blurred", "bogus"]
+    done = subprocess.run(
+        ["node", str(script), json.dumps(scales)], capture_output=True, text=True, check=True
+    )
+    html = dict(zip([str(s) for s in scales], json.loads(done.stdout), strict=True))
+
+    def fit_of(markup: str) -> list[str]:
+        return re.findall(r"object-fit:(\w+)", markup)
+
+    # Unset and unknown values follow the manifest default ("fill").
+    assert fit_of(html["None"]) == ["cover"] and 'data-scale="fill"' in html["None"]
+    assert fit_of(html["bogus"]) == ["cover"] and 'data-scale="fill"' in html["bogus"]
+    assert fit_of(html["fit"]) == ["contain"]
+    assert fit_of(html["fill"]) == ["cover"] and 'data-scale="fill"' in html["fill"]
+    assert fit_of(html["stretch"]) == ["fill"]
+    # Blurred: a cover-scaled blurred copy behind the contained photo.
+    assert fit_of(html["blurred"]) == ["cover", "contain"]
+    assert "blur(18px)" in html["blurred"]
+    assert "blur(" not in html["fill"]
