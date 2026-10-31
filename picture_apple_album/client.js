@@ -4,7 +4,7 @@
 //
 // The Scale option maps onto object-fit, like the other picture widgets.
 // The shared .is-bleed rule defaults the <img> to cover, so every mode
-// (including the "fit" default) is set inline here so the dropdown
+// (including the "fill" default) is set inline here so the dropdown
 // actually does something. "Fit with blurred background" paints a
 // blurred, cover-scaled copy of the same image behind the contained one.
 
@@ -31,7 +31,7 @@ export default function render(shadow, ctx) {
   const data = ctx?.data ?? {};
   const opts = ctx?.cell?.options || {};
   const showCaption = opts.show_caption === true; // default false, pictures are the point
-  const scale = OBJECT_FIT[String(opts.scale || "fit")] ? String(opts.scale || "fit") : "fit";
+  const scale = OBJECT_FIT[String(opts.scale || "fill")] ? String(opts.scale || "fill") : "fill";
   const objectFit = OBJECT_FIT[scale];
   const css = `<link rel="stylesheet" href="/static/style/spectra-widgets.css">`;
 

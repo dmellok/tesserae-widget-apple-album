@@ -272,9 +272,9 @@ def test_client_applies_scale_to_the_rendered_image(tmp_path: Path) -> None:
     def fit_of(markup: str) -> list[str]:
         return re.findall(r"object-fit:(\w+)", markup)
 
-    # Unset and unknown values follow the manifest default ("fit").
-    assert fit_of(html["None"]) == ["contain"] and 'data-scale="fit"' in html["None"]
-    assert fit_of(html["bogus"]) == ["contain"] and 'data-scale="fit"' in html["bogus"]
+    # Unset and unknown values follow the manifest default ("fill").
+    assert fit_of(html["None"]) == ["cover"] and 'data-scale="fill"' in html["None"]
+    assert fit_of(html["bogus"]) == ["cover"] and 'data-scale="fill"' in html["bogus"]
     assert fit_of(html["fit"]) == ["contain"]
     assert fit_of(html["fill"]) == ["cover"] and 'data-scale="fill"' in html["fill"]
     assert fit_of(html["stretch"]) == ["fill"]

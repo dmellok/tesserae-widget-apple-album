@@ -39,7 +39,7 @@
       "name": "scale",
       "type": "select",
       "label": "Scale",
-      "default": "fit",
+      "default": "fill",
       "choices": [
         { "value": "fit",     "label": "Fit (letterbox)" },
         { "value": "fill",    "label": "Fill (crop to cover)" },
