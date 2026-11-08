@@ -50,5 +50,8 @@
     { "name": "show_caption", "type": "boolean", "label": "Show date + album-name overlay", "default": true },
     { "name": "show_sequence", "type": "boolean", "label": "Show sequence indicator (3 / 12)", "default": true }
   ],
+  "lineups": {
+    "draw": true
+  },
   "render": { "dither": "floyd-steinberg", "needs_network": true, "full_bleed": true }
 }

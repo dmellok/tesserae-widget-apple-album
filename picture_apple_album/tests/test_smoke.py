@@ -310,3 +310,11 @@ def test_legacy_derivative_is_the_smallest_that_covers_the_cell(tmp_path, monkey
     assert server._asset_url_for("https://x/", "TOK", photo, tmp_path, (800, 480)).endswith("/c2048")
     assert server._asset_url_for("https://x/", "TOK", photo, tmp_path, (3840, 2160)).endswith("/c4096")
     assert server._asset_url_for("https://x/", "TOK", photo, tmp_path, (300, 200)).endswith("/c342")
+
+
+def test_manifest_lets_lineups_draw_another_photo() -> None:
+    import json
+    from pathlib import Path
+
+    manifest = json.loads((Path(__file__).resolve().parent.parent / "plugin.json").read_text())
+    assert manifest["lineups"] == {"draw": True}
