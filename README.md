@@ -21,6 +21,8 @@ The widget uses Apple's undocumented endpoints, the same ones icloud.com uses fo
 
 The photo list is cached for 6 hours, so new photos show up within that time.
 
+On the Lineups page, the arrows on a step showing this widget draw another photo (the widget declares `"lineups": {"draw": true}`).
+
 ## Install
 
 Settings → Widgets → Browse community widgets → Install.

@@ -282,3 +282,11 @@ def test_client_applies_scale_to_the_rendered_image(tmp_path: Path) -> None:
     assert fit_of(html["blurred"]) == ["cover", "contain"]
     assert "blur(18px)" in html["blurred"]
     assert "blur(" not in html["fill"]
+
+
+def test_manifest_lets_lineups_draw_another_photo() -> None:
+    import json
+    from pathlib import Path
+
+    manifest = json.loads((Path(__file__).resolve().parent.parent / "plugin.json").read_text())
+    assert manifest["lineups"] == {"draw": True}
