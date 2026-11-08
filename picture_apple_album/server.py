@@ -316,14 +316,50 @@ def _load_legacy_manifest(token: str) -> dict[str, Any]:
     return manifest
 
 
-def _asset_url_for(base: str, token: str, photo: dict[str, Any], data_dir: Path) -> str | None:
-    """Resolve the signed URL for a photo's largest derivative.
-    Caches per-photo for ASSET_TTL_S so a render burst doesn't
+def _covers(width: int, height: int, cell: tuple[int, int]) -> bool:
+    """Whether a width x height image covers ``cell`` (a couple of percent
+    short is fine)."""
+    if width <= 0 or height <= 0:
+        return False
+    return max(cell[0] / width, cell[1] / height) <= 1.02
+
+
+def _cell_size(ctx: dict[str, Any]) -> tuple[int, int] | None:
+    """The size of the cell being drawn, when the host says (Tesserae passes
+    ``cell_w`` / ``cell_h``); None keeps the old choice of size."""
+    try:
+        w = int(ctx.get("cell_w") or 0)
+        h = int(ctx.get("cell_h") or 0)
+    except (TypeError, ValueError):
+        return None
+    return (w, h) if w > 0 and h > 0 else None
+
+
+def _asset_url_for(
+    base: str,
+    token: str,
+    photo: dict[str, Any],
+    data_dir: Path,
+    cell: tuple[int, int] | None = None,
+) -> str | None:
+    """Resolve the signed URL for a photo's derivative: the smallest one that
+    covers ``cell``, or the largest when no cell size is known or none covers
+    it. Caches per photo and size for ASSET_TTL_S so a render burst doesn't
     repeatedly hit /webasseturls."""
     guid = photo.get("guid")
     if not guid:
         return None
-    cache_path = data_dir / f"asset_{_safe_cache_key(token)}_{_safe_cache_key(guid)}.json"
+    by_size = sorted(photo.get("derivatives") or [], key=lambda d: int(d.get("fileSize") or 0))
+    covering = (
+        [d for d in by_size if _covers(int(d.get("width") or 0), int(d.get("height") or 0), cell)]
+        if cell is not None
+        else []
+    )
+    derivs = covering[:1] + list(reversed(by_size)) if covering else list(reversed(by_size))
+    size_tag = f"_{derivs[0].get('size_key')}" if covering else ""
+    cache_path = (
+        data_dir / f"asset_{_safe_cache_key(token)}_{_safe_cache_key(guid)}{size_tag}.json"
+    )
     cached = _read_cache(cache_path, ASSET_TTL_S)
     if cached and cached.get("url"):
         return str(cached["url"])
@@ -332,13 +368,8 @@ def _asset_url_for(base: str, token: str, photo: dict[str, Any], data_dir: Path)
     if status >= 400:
         return None
     items = body.get("items") or {}
-    # Pick the largest derivative we know about (highest fileSize); look
-    # up its checksum in the items map for the signed URL.
-    derivs = sorted(
-        photo.get("derivatives") or [],
-        key=lambda d: int(d.get("fileSize") or 0),
-        reverse=True,
-    )
+    # The chosen derivative first, then the rest largest first; look up its
+    # checksum in the items map for the signed URL.
     for d in derivs:
         item = items.get(d["checksum"])
         if not item:
@@ -525,9 +556,29 @@ def _ck_url_expiry(url: str) -> float:
         return time.time() + CK_URL_TTL_S
 
 
-def _ck_rendition(asset: dict[str, Any] | None, master: dict[str, Any]) -> dict[str, Any] | None:
+def _ck_rendition(
+    asset: dict[str, Any] | None,
+    master: dict[str, Any],
+    cell: tuple[int, int] | None = None,
+) -> dict[str, Any] | None:
     """The preferred browser-friendly rendition of one photo:
-    {"on", "field", "url", "url_expires", "width", "height"}."""
+    {"on", "field", "url", "url_expires", "width", "height"}. With a cell
+    size, the smallest rendition that covers the cell (renditions run small
+    to large), else the largest there is."""
+    found = _ck_renditions(asset, master)
+    if not found:
+        return None
+    if cell is None:
+        return found[0]
+    for rendition in found:
+        if _covers(rendition["width"], rendition["height"], cell):
+            return rendition
+    return found[-1]
+
+
+def _ck_renditions(asset: dict[str, Any] | None, master: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every browser-friendly rendition of one photo, in CK_RENDITIONS order."""
+    out: list[dict[str, Any]] = []
     records = {"asset": asset, "master": master}
     for on, prefix in CK_RENDITIONS:
         record = records[on]
@@ -546,15 +597,17 @@ def _ck_rendition(asset: dict[str, Any] | None, master: dict[str, Any]) -> dict[
         if prefix == "resOriginal" and int(_ck_value(master, "originalOrientation") or 1) >= 5:
             width, height = height, width
         url = str(res["downloadURL"]).replace("${f}", "photo.jpg")
-        return {
-            "on": on,
-            "field": prefix + "Res",
-            "url": url,
-            "url_expires": _ck_url_expiry(url),
-            "width": width,
-            "height": height,
-        }
-    return None
+        out.append(
+            {
+                "on": on,
+                "field": prefix + "Res",
+                "url": url,
+                "url_expires": _ck_url_expiry(url),
+                "width": width,
+                "height": height,
+            }
+        )
+    return out
 
 
 def _ck_is_video(master: dict[str, Any]) -> bool:
@@ -640,17 +693,30 @@ def _load_cloudkit_manifest(token: str, data_dir: Path) -> dict[str, Any]:
     }
 
 
-def _ck_asset_url_for(token: str, photo: dict[str, Any], data_dir: Path) -> str | None:
+def _ck_asset_url_for(
+    token: str,
+    photo: dict[str, Any],
+    data_dir: Path,
+    cell: tuple[int, int] | None = None,
+) -> str | None:
     """A download URL for a manifest photo that is good for a couple more
     minutes: the one from the manifest while it lasts, then a fresh one
-    from records/lookup (cached until shortly before it expires)."""
+    from records/lookup (cached until shortly before it expires). When the
+    manifest's rendition is too small for ``cell``, a bigger one is looked
+    up instead."""
     guid = photo.get("guid")
     if not guid:
         return None
     deadline = time.time() + CK_URL_MARGIN_S
-    if photo.get("url") and float(photo.get("url_expires") or 0) > deadline:
+    bigger = cell is not None and not _covers(
+        int(photo.get("width") or 0), int(photo.get("height") or 0), cell
+    )
+    if not bigger and photo.get("url") and float(photo.get("url_expires") or 0) > deadline:
         return str(photo["url"])
-    cache_path = data_dir / f"asset_{_safe_cache_key(token)}_{_safe_cache_key(guid)}.json"
+    size_tag = f"_{cell[0]}x{cell[1]}" if bigger and cell is not None else ""
+    cache_path = (
+        data_dir / f"asset_{_safe_cache_key(token)}_{_safe_cache_key(guid)}{size_tag}.json"
+    )
     cached = _read_cache(cache_path, ASSET_TTL_S)
     if cached and cached.get("url") and float(cached.get("url_expires") or 0) > deadline:
         return str(cached["url"])
@@ -670,7 +736,7 @@ def _ck_asset_url_for(token: str, photo: dict[str, Any], data_dir: Path) -> str 
         with contextlib.suppress(OSError):
             (data_dir / f"manifest_{_safe_cache_key(token)}.json").unlink()
         return None
-    rendition = _ck_rendition(found.get(guid), master)
+    rendition = _ck_rendition(found.get(guid), master, cell if bigger else None)
     if rendition is None:
         return None
     _write_cache(cache_path, {"url": rendition["url"], "url_expires": rendition["url_expires"]})
@@ -753,15 +819,16 @@ def fetch(
     else:
         photo = random.choice(filtered)
 
+    cell = _cell_size(ctx)
     if manifest.get("system") == CLOUDKIT:
         try:
-            url = _ck_asset_url_for(token, photo, data_dir)
+            url = _ck_asset_url_for(token, photo, data_dir, cell)
         except AlbumError as err:
             return {"error": str(err)[:200], "url": None}
         except Exception as err:
             return {"error": f"{type(err).__name__}: {err}"[:200], "url": None}
     else:
-        url = _asset_url_for(manifest["base"], token, photo, data_dir)
+        url = _asset_url_for(manifest["base"], token, photo, data_dir, cell)
     if not url:
         return {"error": "Could not resolve a signed URL for the picked photo.", "url": None}
 

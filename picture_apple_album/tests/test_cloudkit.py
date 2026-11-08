@@ -451,3 +451,42 @@ def test_live_album_lists_and_downloads_a_jpeg(tmp_path) -> None:
         f"\nlive album: {out['count']} photos, '{out['stream']}', "
         f"{len(data)} byte JPEG in {time.time() - started:.1f}s"
     )
+
+
+def _sized_master() -> dict:
+    return {
+        "recordName": "M1",
+        "recordType": "CPLMaster",
+        "fields": {
+            **_res("resJPEGMed", "public.jpeg", 2048, 1365),
+            **_res("resJPEGFull", "public.jpeg", 4096, 2731),
+            **_res("resOriginal", "public.jpeg", 6000, 4000),
+        },
+    }
+
+
+def test_rendition_is_the_smallest_that_covers_the_cell() -> None:
+    server = _load_server()
+    master = _sized_master()
+    assert server._ck_rendition(None, master)["field"] == "resJPEGMedRes"
+    assert server._ck_rendition(None, master, (800, 480))["field"] == "resJPEGMedRes"
+    assert server._ck_rendition(None, master, (3840, 2160))["field"] == "resJPEGFullRes"
+    assert server._ck_rendition(None, master, (8000, 6000))["field"] == "resOriginalRes"
+
+
+def test_a_4k_cell_looks_up_a_bigger_rendition(tmp_path) -> None:
+    server = _load_server()
+    photo = {"guid": "M1", "master": "M1", "width": 2048, "height": 1365,
+             "url": "https://cvws.icloud-content.com/B/resJPEGMed/photo.jpg?e=4102444800",
+             "url_expires": 4102444800}
+    calls = []
+
+    def fake_call(token, data_dir, path, body):
+        calls.append(path)
+        return 200, {"records": [_sized_master()]}
+
+    with patch.object(server, "_ck_call", fake_call):
+        small = server._ck_asset_url_for("TOKEN", photo, tmp_path, (800, 480))
+        big = server._ck_asset_url_for("TOKEN", photo, tmp_path, (3840, 2160))
+    assert "resJPEGMed" in small and calls == ["records/lookup"]
+    assert "resJPEGFull" in big

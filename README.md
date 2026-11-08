@@ -12,7 +12,7 @@ Photo carousel from a public [iCloud Shared Album](https://support.apple.com/gui
    - `https://www.icloud.com/sharedalbum/#<token>` (older shared albums)
    - a bare token; the widget works out which kind of album it is.
 
-No API key or Apple ID needed. Photos are shown at Apple's 2048 px JPEG size (with the owner's edits); videos are skipped.
+No API key or Apple ID needed. Each photo uses the smallest of Apple's JPEG sizes (with the owner's edits) that covers the cell it is drawn in, so an e-paper tag gets the 2048 px JPEG and a 4K screen a bigger one; videos are skipped.
 
 The widget uses Apple's undocumented endpoints, the same ones icloud.com uses for people without an Apple ID:
 

@@ -282,3 +282,31 @@ def test_client_applies_scale_to_the_rendered_image(tmp_path: Path) -> None:
     assert fit_of(html["blurred"]) == ["cover", "contain"]
     assert "blur(18px)" in html["blurred"]
     assert "blur(" not in html["fill"]
+
+
+def test_legacy_derivative_is_the_smallest_that_covers_the_cell(tmp_path, monkeypatch) -> None:
+    import importlib.util
+    from pathlib import Path
+
+    spec = importlib.util.spec_from_file_location(
+        "apple_server_sized", Path(__file__).resolve().parent.parent / "server.py"
+    )
+    server = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server)
+    photo = {
+        "guid": "G1",
+        "derivatives": [
+            {"size_key": "342", "checksum": "c342", "width": 342, "height": 228, "fileSize": 30_000},
+            {"size_key": "2048", "checksum": "c2048", "width": 2048, "height": 1365, "fileSize": 600_000},
+            {"size_key": "4096", "checksum": "c4096", "width": 4096, "height": 2731, "fileSize": 2_400_000},
+        ],
+    }
+    items = {
+        c: {"url_location": "cvws.icloud-content.com", "url_path": f"/{c}"}
+        for c in ("c342", "c2048", "c4096")
+    }
+    monkeypatch.setattr(server, "_post_json", lambda url, body: (200, {"items": items}))
+    assert server._asset_url_for("https://x/", "TOK", photo, tmp_path).endswith("/c4096")
+    assert server._asset_url_for("https://x/", "TOK", photo, tmp_path, (800, 480)).endswith("/c2048")
+    assert server._asset_url_for("https://x/", "TOK", photo, tmp_path, (3840, 2160)).endswith("/c4096")
+    assert server._asset_url_for("https://x/", "TOK", photo, tmp_path, (300, 200)).endswith("/c342")
