@@ -312,9 +312,10 @@ def test_legacy_derivative_is_the_smallest_that_covers_the_cell(tmp_path, monkey
     assert server._asset_url_for("https://x/", "TOK", photo, tmp_path, (300, 200)).endswith("/c342")
 
 
-def test_manifest_lets_lineups_draw_another_photo() -> None:
+def test_manifest_declares_lineup_items_and_keeps_draw() -> None:
     import json
     from pathlib import Path
 
     manifest = json.loads((Path(__file__).resolve().parent.parent / "plugin.json").read_text())
-    assert manifest["lineups"] == {"draw": True}
+    assert manifest["lineups"] == {"pin_option": "pinned_asset", "noun": "photos", "draw": True}
+    assert any(o["name"] == "pinned_asset" for o in manifest["cell_options"])

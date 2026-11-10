@@ -48,9 +48,18 @@
       ]
     },
     { "name": "show_caption", "type": "boolean", "label": "Show date + album-name overlay", "default": true },
-    { "name": "show_sequence", "type": "boolean", "label": "Show sequence indicator (3 / 12)", "default": true }
+    { "name": "show_sequence", "type": "boolean", "label": "Show sequence indicator (3 / 12)", "default": true },
+    {
+      "name": "pinned_asset",
+      "type": "string",
+      "label": "Pinned photo (set from Lineups)",
+      "default": "",
+      "help": "Leave blank to rotate through the album. The Lineups page fills this in when you choose a photo."
+    }
   ],
   "lineups": {
+    "pin_option": "pinned_asset",
+    "noun": "photos",
     "draw": true
   },
   "render": { "dither": "floyd-steinberg", "needs_network": true, "full_bleed": true }
