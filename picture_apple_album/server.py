@@ -37,10 +37,12 @@ References (reverse-engineered, MIT):
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import hashlib
 import json
 import random
 import re
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -801,11 +803,17 @@ def fetch(
 
     orientation = (options.get("orientation") or "any").lower()
     filtered = _filter_orientation(photos, orientation)
-    if not filtered:
+    # A photo chosen on the Lineups page: show exactly it, and leave the
+    # sequential cursor alone. A pin the album no longer holds is ignored.
+    pinned = str(options.get("pinned_asset") or "").strip()
+    pinned_photo = next((p for p in photos if pinned and p.get("guid") == pinned), None)
+    if not filtered and pinned_photo is None:
         return {"error": f"No {orientation} photos in this album.", "url": None}
 
     mode = options.get("mode", "random")
-    if mode == "sequential":
+    if pinned_photo is not None:
+        photo = pinned_photo
+    elif mode == "sequential":
         suffix = f"_{orientation}" if orientation != "any" else ""
         idx_file = data_dir / f".seq_idx_{_safe_cache_key(token)}{suffix}"
         try:
@@ -840,3 +848,136 @@ def fetch(
         "owner": manifest.get("owner"),
         "count": len(filtered),
     }
+
+
+# ----- Lineups: the photos a dashboard can show or pin ----------------
+
+# How long a Lineups request may wait for Apple before it settles for what
+# is cached. The work carries on in the background and fills the cache.
+LINEUP_WAIT_S = 4.0
+# Photos whose thumbnail links are fetched in one go for an older album.
+LINEUP_THUMB_PHOTOS = 120
+LINEUP_THUMBS_PREFIX = "lineup_thumbs_"
+_LINEUP_BUSY: set[str] = set()
+_LINEUP_LOCK = threading.Lock()
+
+
+def _time_boxed(key: str, work: Any, wait: float | None = None) -> bool:
+    """Run ``work()`` in the background and wait up to ``wait`` seconds (default
+    LINEUP_WAIT_S) for it. True when it finished without raising. One run per
+    ``key`` at a time: a second caller does not start another request."""
+    done = threading.Event()
+    ok: list[bool] = []
+
+    def run() -> None:
+        try:
+            work()
+            ok.append(True)
+        except Exception:
+            pass
+        finally:
+            with _LINEUP_LOCK:
+                _LINEUP_BUSY.discard(key)
+            done.set()
+
+    with _LINEUP_LOCK:
+        if key in _LINEUP_BUSY:
+            return False
+        _LINEUP_BUSY.add(key)
+    # Run in a copy of this call's context, so the host's network allowlist
+    # for the widget applies in the worker as it does here.
+    threading.Thread(target=contextvars.copy_context().run, args=(run,), daemon=True).start()
+    done.wait(LINEUP_WAIT_S if wait is None else wait)
+    return bool(ok)
+
+
+def _lineup_listing(
+    options: dict[str, Any], ctx: dict[str, Any] | None
+) -> tuple[str, dict[str, Any], list[dict[str, Any]], Path] | None:
+    """``(token, manifest, photos the options let through, data_dir)`` from the
+    cached album, or None. A manifest past its 6 hours is reloaded within the
+    time box; when that does not finish, the old one still lists the album."""
+    raw_dir = (ctx or {}).get("data_dir")
+    system, token = _parse_album(str(options.get("album") or ""))
+    if not raw_dir or not token or not TOKEN_RE.match(token):
+        return None
+    data_dir = Path(str(raw_dir))
+    path = data_dir / f"manifest_{_safe_cache_key(token)}.json"
+    manifest = _read_cache(path, MANIFEST_TTL_S)
+    if manifest is None:
+        _time_boxed(f"manifest:{token}", lambda: _load_manifest(token, data_dir, system))
+        manifest = _read_cache(path, MANIFEST_TTL_S) or _read_cache(path, 10**12)
+    photos = manifest.get("photos") if isinstance(manifest, dict) else None
+    if not isinstance(manifest, dict) or not isinstance(photos, list):
+        return None
+    orientation = str(options.get("orientation") or "any").lower()
+    shown = [p for p in _filter_orientation(photos, orientation) if p.get("guid")]
+    return token, manifest, shown, data_dir
+
+
+def _legacy_thumbs(
+    base: str, token: str, photos: list[dict[str, Any]], data_dir: Path
+) -> dict[str, str]:
+    """guid -> signed URL of the smallest derivative, for the first photos of an
+    older album: one batched /webasseturls call, cached for the URLs' life."""
+    path = data_dir / f"{LINEUP_THUMBS_PREFIX}{_safe_cache_key(token)}.json"
+    wanted = [p for p in photos[:LINEUP_THUMB_PHOTOS] if p.get("derivatives")]
+    cached = _read_cache(path, ASSET_TTL_S)
+    if cached is None and wanted:
+
+        def load() -> None:
+            smallest = {
+                p["guid"]: min(p["derivatives"], key=lambda d: int(d.get("fileSize") or 0))
+                for p in wanted
+            }
+            status, body = _post_json(base + "webasseturls", {"photoGuids": list(smallest)})
+            if status >= 400:
+                return
+            items = body.get("items") or {}
+            urls = {}
+            for guid, deriv in smallest.items():
+                item = items.get(deriv["checksum"]) or {}
+                if item.get("url_location") and item.get("url_path"):
+                    urls[guid] = f"https://{item['url_location']}{item['url_path']}"
+            _write_cache(path, urls)
+
+        _time_boxed(f"thumbs:{token}", load)
+        cached = _read_cache(path, ASSET_TTL_S)
+    return {k: v for k, v in (cached or {}).items() if isinstance(v, str)}
+
+
+def lineup_items(
+    options: dict[str, Any], *, ctx: dict[str, Any] | None = None
+) -> list[dict[str, str]]:
+    """The album's photos for the Lineups page: ``[{"key", "label", "thumb"}]``,
+    from the cached manifest (one time-boxed load when there is none). The
+    thumb is the smallest derivative; a signed link that has run out is left
+    off rather than fetched again."""
+    found = _lineup_listing(options, ctx)
+    if found is None:
+        return []
+    token, manifest, photos, data_dir = found
+    cloudkit = manifest.get("system") == CLOUDKIT
+    thumbs: dict[str, str] = {}
+    if not cloudkit and manifest.get("base"):
+        thumbs = _legacy_thumbs(str(manifest["base"]), token, photos, data_dir)
+    deadline = time.time() + CK_URL_MARGIN_S
+    items = []
+    for n, p in enumerate(photos, 1):
+        guid = str(p["guid"])
+        thumb = thumbs.get(guid, "")
+        if cloudkit and p.get("url") and float(p.get("url_expires") or 0) > deadline:
+            thumb = str(p["url"])
+        date = str(p.get("dateCreated") or "")[:10]
+        item = {"key": guid, "label": date or f"Photo {n}"}
+        if thumb:
+            item["thumb"] = thumb
+        items.append(item)
+    return items
+
+
+def lineup_item_count(options: dict[str, Any], *, ctx: dict[str, Any] | None = None) -> int | None:
+    """How many photos the options let through, or None while the album is not
+    cached."""
+    found = _lineup_listing(options, ctx)
+    return None if found is None else len(found[2])

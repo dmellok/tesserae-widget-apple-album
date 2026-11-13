@@ -21,7 +21,7 @@ The widget uses Apple's undocumented endpoints, the same ones icloud.com uses fo
 
 The photo list is cached for 6 hours, so new photos show up within that time.
 
-On the Lineups page, the arrows on a step showing this widget draw another photo (the widget declares `"lineups": {"draw": true}`).
+On the Lineups page the widget lists the album's photos (from the cached list, with small previews), so the arrows step through them and *Show chosen* pins one through the **Pinned photo** option; a pinned photo never moves the sequential position. The widget declares `"lineups": {"pin_option": "pinned_asset", "noun": "photos", "draw": true}`. For CloudKit albums a preview is left out once Apple's 15-minute link has run out.
 
 ## Install
 
