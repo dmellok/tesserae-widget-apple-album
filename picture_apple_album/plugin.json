@@ -9,6 +9,8 @@
   "cell_options": [
     {
       "name": "album",
+      "help": "Turn on Public Website for the Shared Album in Photos, then paste the complete iCloud share link, including its token. Also accepts photos.icloud.com/shared/album/ links, share.icloud.com/photos/ links, or a bare token. Preserve the token's capitals; use plain text.",
+      "placeholder": "https://www.icloud.com/sharedalbum/#B0aGxxxxxxxxxx",
       "type": "string",
       "label": "Album share link or token",
       "default": ""
@@ -47,8 +49,8 @@
         { "value": "blurred", "label": "Fit with blurred background" }
       ]
     },
-    { "name": "show_caption", "type": "boolean", "label": "Show date + album-name overlay", "default": true },
-    { "name": "show_sequence", "type": "boolean", "label": "Show sequence indicator (3 / 12)", "default": true },
+    { "name": "show_caption", "type": "boolean", "label": "Caption", "default": true, "help": "The photo's date and the album name over the bottom of the photo." },
+    { "name": "show_sequence", "type": "boolean", "label": "Position in the album", "default": true, "help": "Which photo this is out of how many, such as 3 / 12." },
     {
       "name": "pinned_asset",
       "type": "string",

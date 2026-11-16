@@ -775,10 +775,7 @@ def fetch(
     system, token = _parse_album(options.get("album") or "")
     if not token:
         return {
-            "error": "Paste the share link from a public iCloud Shared Album "
-            "(https://photos.icloud.com/shared/album/… or "
-            "https://www.icloud.com/sharedalbum/#…). Turn on the public "
-            "link (Public Website) for the album in Photos to get it.",
+            "error": "Paste the album's share link in the cell editor.",
             "url": None,
         }
     if not TOKEN_RE.match(token):
