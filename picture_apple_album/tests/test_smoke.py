@@ -217,7 +217,7 @@ def test_fetch_returns_error_when_token_missing() -> None:
     server = _load_server()
     out = server.fetch({}, {}, ctx={"data_dir": "/tmp/aa_nope"})
     assert "error" in out
-    assert "share link" in out["error"].lower()
+    assert out["error"] == "Paste the album's share link in the cell editor."
 
 
 @pytest.mark.parametrize("size", ["sm", "md", "lg"])
