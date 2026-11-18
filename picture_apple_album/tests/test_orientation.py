@@ -153,19 +153,28 @@ def test_match_the_frame_keeps_a_sequence_per_frame_shape(tmp_path) -> None:
     assert ids == ["L1", "P1", "L2", "P1"]
 
 
-def test_lineups_list_auto_and_frame_as_any(tmp_path) -> None:
+def test_lineups_list_only_what_each_frame_is_shown(tmp_path) -> None:
     server = _load_server()
     _seed(server, tmp_path)
-    ctx = {"data_dir": str(tmp_path), "frame_shapes": BOTH, **WIDE}
+    wide = {"data_dir": str(tmp_path), "frame_shapes": BOTH, **WIDE}
+    tall = {"data_dir": str(tmp_path), "frame_shapes": BOTH, **TALL}
     with patch("urllib.request.urlopen", side_effect=_no_network):
-        for orientation in ("auto", "frame", "any"):
+        for orientation in ("auto", "frame", None):  # None: nothing saved
             opts = {"album": LINK, "orientation": orientation}
-            assert [i["key"] for i in server.lineup_items(opts, ctx=ctx)] == [
+            assert [i["key"] for i in server.lineup_items(opts, ctx=wide)] == [
                 "L1",
+                "S1",
+            ]
+            assert [i["key"] for i in server.lineup_items(opts, ctx=tall)] == [
                 "P1",
                 "S1",
             ]
-            assert server.lineup_item_count(opts, ctx=ctx) == 3
+            assert server.lineup_item_count(opts, ctx=wide) == 2
+        any_opts = {"album": LINK, "orientation": "any"}
+        assert server.lineup_item_count(any_opts, ctx=wide) == 3
+        one_shape = {**wide, "frame_shapes": ["landscape"]}
+        auto = {"album": LINK, "orientation": "auto"}
+        assert server.lineup_item_count(auto, ctx=one_shape) == 3
 
 
 def test_pinned_photo_ignores_match_the_frame(tmp_path) -> None:

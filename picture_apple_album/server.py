@@ -948,8 +948,13 @@ def _lineup_listing(
     photos = manifest.get("photos") if isinstance(manifest, dict) else None
     if not isinstance(manifest, dict) or not isinstance(photos, list):
         return None
-    orientation = str(options.get("orientation") or "any").lower()
-    shown = [p for p in _filter_orientation(photos, orientation) if p.get("guid")]
+    # The photos this frame is shown, as a render picks them: Auto and Match
+    # the frame use the frame's cell size and frame shapes. Unset reads as the
+    # default, Auto (a render gets it filled in; a listing reads saved options).
+    orientation = str(options.get("orientation") or "auto").lower()
+    shape = _frame_shape(orientation, ctx or {})
+    pool = _match_frame(photos, shape) if shape else _filter_orientation(photos, orientation)
+    shown = [p for p in pool if p.get("guid")]
     return token, manifest, shown, data_dir
 
 

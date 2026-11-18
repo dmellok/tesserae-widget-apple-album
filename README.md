@@ -21,7 +21,7 @@ The widget uses Apple's undocumented endpoints, the same ones icloud.com uses fo
 
 The photo list is cached for 6 hours, so new photos show up within that time.
 
-The orientation filter defaults to **Auto**: when the dashboard is on both portrait and landscape frames, each frame gets photos of its own shape (plus square ones), and otherwise any photo shows. **Match the frame** always does this. If the album has no photo of the frame's shape, the whole album is used. Lineups lists every photo for both.
+The orientation filter defaults to **Auto**: when the dashboard is on both portrait and landscape frames, each frame gets photos of its own shape (plus square ones), and otherwise any photo shows. **Match the frame** always does this. If the album has no photo of the frame's shape, the whole album is used. On the Lineups page each frame lists only the photos it is shown.
 
 On the Lineups page the widget lists the album's photos (from the cached list, with small previews), so the arrows step through them and *Show chosen* pins one through the **Pinned photo** option; a pinned photo never moves the sequential position. The widget declares `"lineups": {"pin_option": "pinned_asset", "noun": "photos", "draw": true}`. For CloudKit albums a preview is left out once Apple's 15-minute link has run out.
 
