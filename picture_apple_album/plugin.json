@@ -19,13 +19,16 @@
       "name": "orientation",
       "type": "select",
       "label": "Orientation filter",
-      "default": "any",
+      "default": "auto",
       "choices": [
+        { "value": "auto",      "label": "Auto" },
+        { "value": "frame",     "label": "Match the frame" },
         { "value": "any",       "label": "Any" },
         { "value": "portrait",  "label": "Portrait" },
         { "value": "landscape", "label": "Landscape" },
         { "value": "square",    "label": "Square" }
-      ]
+      ],
+      "help": "Auto matches each frame's shape when the dashboard is on both portrait and landscape frames, and shows any photo otherwise. Match the frame always does."
     },
     {
       "name": "mode",

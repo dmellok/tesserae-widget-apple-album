@@ -760,9 +760,47 @@ def _orientation_of(p: dict[str, Any]) -> str:
 
 
 def _filter_orientation(photos: list[dict[str, Any]], wanted: str) -> list[dict[str, Any]]:
-    if wanted == "any":
+    # Auto and Match the frame depend on the frame, so lists that are not per
+    # frame (Lineups) treat them as Any; fetch narrows them per render.
+    if wanted in ("any", "auto", "frame"):
         return photos
     return [p for p in photos if _orientation_of(p) == wanted]
+
+
+def _cell_shape(ctx: dict[str, Any]) -> str | None:
+    """``landscape`` or ``portrait`` for the cell being drawn (``cell_w`` /
+    ``cell_h``, else ``panel_w`` / ``panel_h``); None when square or unknown."""
+
+    def size(wk: str, hk: str) -> tuple[int, int]:
+        try:
+            return int(ctx.get(wk) or 0), int(ctx.get(hk) or 0)
+        except (TypeError, ValueError):
+            return 0, 0
+
+    w, h = size("cell_w", "cell_h")
+    if w <= 0 or h <= 0:
+        w, h = size("panel_w", "panel_h")
+    if w <= 0 or h <= 0 or w == h:
+        return None
+    return "landscape" if w > h else "portrait"
+
+
+def _frame_shape(orientation: str, ctx: dict[str, Any]) -> str | None:
+    """The shape Match the frame narrows this render to, or None for no
+    filter. Auto matches the frame only when the dashboard is on both
+    portrait and landscape frames (``frame_shapes``)."""
+    if orientation == "auto":
+        shapes = ctx.get("frame_shapes")
+        if not isinstance(shapes, (list, tuple, set)) or not {"landscape", "portrait"} <= set(shapes):
+            return None
+    elif orientation != "frame":
+        return None
+    return _cell_shape(ctx)
+
+
+def _match_frame(photos: list[dict[str, Any]], shape: str) -> list[dict[str, Any]]:
+    """Photos of the frame's shape plus square ones; all of them when none fit."""
+    return [p for p in photos if _orientation_of(p) in (shape, "square")] or photos
 
 
 # ----- plugin contract ----------------------------------------------
@@ -799,7 +837,8 @@ def fetch(
         }
 
     orientation = (options.get("orientation") or "any").lower()
-    filtered = _filter_orientation(photos, orientation)
+    shape = _frame_shape(orientation, ctx)
+    filtered = _match_frame(photos, shape) if shape else _filter_orientation(photos, orientation)
     # A photo chosen on the Lineups page: show exactly it, and leave the
     # sequential cursor alone. A pin the album no longer holds is ignored.
     pinned = str(options.get("pinned_asset") or "").strip()
@@ -811,7 +850,9 @@ def fetch(
     if pinned_photo is not None:
         photo = pinned_photo
     elif mode == "sequential":
-        suffix = f"_{orientation}" if orientation != "any" else ""
+        # One position per set of photos: each frame shape keeps its own.
+        seq = f"frame_{shape}" if shape else orientation
+        suffix = f"_{seq}" if seq not in ("any", "auto", "frame") else ""
         idx_file = data_dir / f".seq_idx_{_safe_cache_key(token)}{suffix}"
         try:
             current = int(idx_file.read_text(encoding="utf-8"))
@@ -907,8 +948,13 @@ def _lineup_listing(
     photos = manifest.get("photos") if isinstance(manifest, dict) else None
     if not isinstance(manifest, dict) or not isinstance(photos, list):
         return None
-    orientation = str(options.get("orientation") or "any").lower()
-    shown = [p for p in _filter_orientation(photos, orientation) if p.get("guid")]
+    # The photos this frame is shown, as a render picks them: Auto and Match
+    # the frame use the frame's cell size and frame shapes. Unset reads as the
+    # default, Auto (a render gets it filled in; a listing reads saved options).
+    orientation = str(options.get("orientation") or "auto").lower()
+    shape = _frame_shape(orientation, ctx or {})
+    pool = _match_frame(photos, shape) if shape else _filter_orientation(photos, orientation)
+    shown = [p for p in pool if p.get("guid")]
     return token, manifest, shown, data_dir
 
 
