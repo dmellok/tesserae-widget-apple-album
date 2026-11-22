@@ -21,11 +21,14 @@
       "label": "Orientation filter",
       "default": "any",
       "choices": [
+        { "value": "auto",      "label": "Auto" },
+        { "value": "frame",     "label": "Match the frame" },
         { "value": "any",       "label": "Any" },
         { "value": "portrait",  "label": "Portrait" },
         { "value": "landscape", "label": "Landscape" },
         { "value": "square",    "label": "Square" }
-      ]
+      ],
+      "help": "Auto shows photos the shape of this cell on each frame when the dashboard is on both portrait and landscape frames, and any photo otherwise. Match the frame always does this, so a portrait cell on a landscape frame shows portrait photos. Both keep square photos, and show the whole album when it has no photo of that shape. Portrait, Landscape and Square show only photos of that shape."
     },
     {
       "name": "mode",
